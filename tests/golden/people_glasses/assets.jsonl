@@ -1,0 +1,6 @@
+{"asset_id": "pg_001", "path": "media/pg_001.jpg", "media_type": "image", "labels": {"glasses": true, "headwear": false, "gender": "male", "age_band": "adult"}, "notes": "окуляри в тонкій оправі, добре видно"}
+{"asset_id": "pg_002", "path": "media/pg_002.jpg", "media_type": "image", "labels": {"glasses": false, "headwear": false, "gender": "male", "age_band": "adult"}}
+{"asset_id": "pg_003", "path": "media/pg_003.jpg", "media_type": "image", "labels": {"glasses": true, "headwear": true, "gender": "female", "age_band": "adult"}, "notes": "сонцезахисні окуляри та капелюх"}
+{"asset_id": "pg_004", "path": "media/pg_004.jpg", "media_type": "image", "labels": {"glasses": false, "headwear": true, "gender": "male", "age_band": "adult"}}
+{"asset_id": "pg_005", "path": "media/pg_005.jpg", "media_type": "image", "labels": {"glasses": false, "headwear": false, "gender": "female", "age_band": "child"}}
+{"asset_id": "pg_006", "path": "media/pg_006.jpg", "media_type": "image", "labels": {"glasses": true, "headwear": false, "gender": "male", "age_band": "adult"}, "notes": "окуляри ледь помітні у профіль — межовий випадок для калібрування порога"}

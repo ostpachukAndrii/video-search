@@ -1,0 +1,279 @@
+{
+  "version": 1,
+  "_comment": [
+    "Замок постачання моделей. Редагується людиною для repo_id/license,",
+    "поля revision і sha256 заповнює scripts/fetch_models.py --update-lock.",
+    "Правило: revision — ЗАВЖДИ 40-символьний commit SHA. Тег можна перезаписати,",
+    "commit — ні, а відтворюваність образу для доказів у справі є вимогою, не зручністю."
+  ],
+  "models": {
+    "siglip2_so400m_naflex": {
+      "role": "ОСНОВНИЙ ембедер: мультимовний image-text, нативне співвідношення сторін (1152 dim)",
+      "source": "hf",
+      "repo_id": "google/siglip2-so400m-patch16-naflex",
+      "revision": "cc24074f717b612951c2dead130904ab9b65a81e",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/google/siglip2-so400m-patch16-naflex",
+      "local_dir": "siglip2-so400m-patch16-naflex",
+      "notes": "NaFlex переважає FixRes на retrieval, надто на малих роздільностях, де спотворення пропорцій болить найбільше (п.12). max_num_patches дає три робочі точки на одних вагах. Текст ОБОВ'ЯЗКОВО в нижньому регістрі — так тренували.",
+      "files": [
+        {
+          "path": ".gitattributes",
+          "sha256": "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930"
+        },
+        {
+          "path": "README.md",
+          "sha256": "1104c24a1af2a8a496146c67581523661277883c8d02f022e216302d61bda49b"
+        },
+        {
+          "path": "config.json",
+          "sha256": "c633ddede50ec15d5818e04325bc4a5ac47c2762194a02486baee7d2a3a3dbc5"
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "11a61a2068800d5f4f35cb041c1fea25de86ce87725e4c97a9ed046d0b22c076"
+        },
+        {
+          "path": "preprocessor_config.json",
+          "sha256": "1125703e5446d5b6ff4d5893a33bac128cdd21dc12e3dad2469a648fb0ae3bf7"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sha256": "baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351"
+        },
+        {
+          "path": "tokenizer.json",
+          "sha256": "58a1696e79c9d97937389ed116f552a15c84811d7b8023918b86f4bc5775b1b0"
+        },
+        {
+          "path": "tokenizer.model",
+          "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "d2343400f0f86133053325951b696df8fd0f53a007cf6a546e6c2b4361344f47"
+        }
+      ]
+    },
+    "siglip2_base_naflex": {
+      "role": "Запасний ембедер для CPU-розробки (768 dim) — НЕ змішувати в одному індексі з so400m",
+      "source": "hf",
+      "repo_id": "google/siglip2-base-patch16-naflex",
+      "revision": "",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/google/siglip2-base-patch16-naflex",
+      "local_dir": "siglip2-base-patch16-naflex",
+      "optional": true,
+      "files": []
+    },
+    "florence2_base": {
+      "role": "Запасне CV-ядро для CPU-розробки",
+      "source": "hf",
+      "repo_id": "florence-community/Florence-2-base",
+      "revision": "",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/florence-community/Florence-2-base",
+      "local_dir": "Florence-2-base-community",
+      "files": [],
+      "optional": true,
+      "notes": "Конвертований чекпоінт, запасний для CPU-розробки."
+    },
+    "florence2_large": {
+      "role": "ОСНОВНЕ CV-ядро Microsoft: region proposals, dense captions, OCR, grounding",
+      "source": "hf",
+      "repo_id": "florence-community/Florence-2-large",
+      "revision": "4271c66b88cdbc05735372ec13b2360108de5317",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/florence-community/Florence-2-large",
+      "local_dir": "Florence-2-large-community",
+      "optional": false,
+      "files": [
+        {
+          "path": ".gitattributes",
+          "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"
+        },
+        {
+          "path": "README.md",
+          "sha256": "5662d3853b245397062aa0b1853958f23305e0b9518071293c5154c7eeb415d2"
+        },
+        {
+          "path": "added_tokens.json",
+          "sha256": "1d75deda84dfa81fb6c09301f3fed00f9695059568bbb1403a6bf299cd84fc37"
+        },
+        {
+          "path": "config.json",
+          "sha256": "8412483f687f2f71587328a38c6fa70a68d9488f28e90607be3c182641f60f2c"
+        },
+        {
+          "path": "generation_config.json",
+          "sha256": "0251459c49cc358ac033b5d4b8569e61ac22bde5d76be404b97a44cfb33fb12e"
+        },
+        {
+          "path": "merges.txt",
+          "sha256": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5"
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "7715423d6549bf1e71188bdd84f4ac960cc0597886af24a5ef7b66f128660685"
+        },
+        {
+          "path": "preprocessor_config.json",
+          "sha256": "1396ec5a0a7adfe1c04fb777b09e8ba753be6dbb5868212ab3c3ef39d91fe031"
+        },
+        {
+          "path": "processor_config.json",
+          "sha256": "cd0e3bf41a39b1276503fbd273bc03b9afc70d7a15ea681a92a1b4b77f858ee6"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sha256": "72ff172dc769bc1551b1b4211628ce3271643bc60379e4da45d85a9be9332c39"
+        },
+        {
+          "path": "tokenizer.json",
+          "sha256": "3ad7001f773409abe6bba33eac92662611a73d72f459bda2f00d2a221dd31ce4"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "cb5f80bd9afa767bb1bb798ee5f0a79eae45239b8e72506166b4218175a16723"
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "ed19656ea1707df69134c4af35c8ceda2cc9860bf2c3495026153a133670ab5e"
+        }
+      ],
+      "notes": "Конвертований чекпоінт під нативну реалізацію transformers. Оригінальний microsoft/* працює лише через trust_remote_code і зламаний на transformers 5.x (_supports_sdpa, forced_bos_token_id, токенізатор). Нативний шлях знімає потребу вендорити код моделі в образ."
+    },
+    "owlv2_base": {
+      "role": "Open-vocab детекція; план Б, якщо Florence-2 не злетить на MPS",
+      "source": "hf",
+      "repo_id": "google/owlv2-base-patch16-ensemble",
+      "revision": "cfd3195ba4ea9592eec887ded089f4c08eff231d",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/google/owlv2-base-patch16-ensemble",
+      "local_dir": "owlv2-base-patch16-ensemble",
+      "optional": true,
+      "files": [
+        {
+          "path": ".gitattributes",
+          "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361"
+        },
+        {
+          "path": "README.md",
+          "sha256": "7c7426bc5ec939a42d1f96fb093031b6263400cceac4129ebb941a0c8c11b9b9"
+        },
+        {
+          "path": "added_tokens.json",
+          "sha256": "e5dc0da35d20111e8ff3fdfc03682beca23d5f94ed74331bce81786b2636a24f"
+        },
+        {
+          "path": "config.json",
+          "sha256": "ba9df8c25a4b8461887dd0a93d9252c9cd84697fe8d49a9d8794ce409af9acb2"
+        },
+        {
+          "path": "merges.txt",
+          "sha256": "9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a"
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "e1e130b9e404cf91a75ad45644c1da9d7fa5284085eecc864266a6923efb99e7"
+        },
+        {
+          "path": "preprocessor_config.json",
+          "sha256": "cf3e396635b797ee1a464e1b2836e98748f8edac19e89aaa2c93b55ac15b0064"
+        },
+        {
+          "path": "pytorch_model.bin",
+          "sha256": "69feda8b53b1c9e2a85ae756bf58c120c3c1b4b4a4d97d4876578c1809a63d76"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sha256": "d6e2b9cf664efbad2d22998b8d3da986abcbeed3e0825ad33605c9401f9cf73e"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "b55cda6198e152ded427c8a9b3faf1cccf27a7fa080697a62f6ff143f511f44f"
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349"
+        }
+      ]
+    },
+    "query_parser_gguf": {
+      "role": "Парсер запиту: нормалізація мови + розбір must/must_not (п.5, п.11)",
+      "source": "hf",
+      "repo_id": "Qwen/Qwen3-4B-GGUF",
+      "revision": "bc640142c66e1fdd12af0bd68f40445458f3869b",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF",
+      "local_dir": "Qwen3-4B-GGUF",
+      "notes": "GGUF через llama.cpp дає один шлях коду на Metal, CUDA і CPU. allow_patterns обовʼязковий: репозиторій містить усі квантизації.",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd"
+        },
+        {
+          "path": "Qwen3-4B-Q4_K_M.gguf",
+          "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"
+        },
+        {
+          "path": "README.md",
+          "sha256": "f7b7cbdbeab2a25b55e92cf160c035287374253b13af7ea2d5178847f6f8537e"
+        }
+      ],
+      "allow_patterns": [
+        "*Q4_K_M.gguf",
+        "*.json",
+        "LICENSE*",
+        "README*"
+      ]
+    },
+    "asr_whisper": {
+      "role": "Мовлення у відео → транскрипт для лексичного шару пошуку",
+      "source": "hf",
+      "repo_id": "Systran/faster-whisper-large-v3",
+      "revision": "",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/Systran/faster-whisper-large-v3",
+      "local_dir": "faster-whisper-large-v3",
+      "optional": true,
+      "files": []
+    },
+    "face_detect_yunet": {
+      "role": "Детекція облич (п.13)",
+      "source": "url",
+      "repo_id": "opencv/opencv_zoo",
+      "revision": "",
+      "license": "MIT",
+      "license_url": "https://github.com/opencv/opencv_zoo/blob/main/LICENSE",
+      "local_dir": "yunet",
+      "optional": true,
+      "files": [
+        {
+          "path": "face_detection_yunet_2023mar.onnx",
+          "sha256": null,
+          "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+        }
+      ]
+    },
+    "face_embed_sface": {
+      "role": "Ембединг облич для пошуку схожих (п.13)",
+      "source": "url",
+      "repo_id": "opencv/opencv_zoo",
+      "revision": "",
+      "license": "UNVERIFIED",
+      "license_url": "https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface",
+      "local_dir": "sface",
+      "optional": true,
+      "notes": "БЛОКЕР: ліцензію ваг має підтвердити юрист. До підтвердження модуль faces лишається за фіче-флагом.",
+      "files": [
+        {
+          "path": "face_recognition_sface_2021dec.onnx",
+          "sha256": null,
+          "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
+        }
+      ]
+    }
+  }
+}

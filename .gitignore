@@ -1,0 +1,29 @@
+# Ваги приїжджають на етапі build за manifest.lock, у git їх не тримаємо.
+models/*
+!models/manifest.lock
+!models/README.md
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Локальні дані та індекси
+data/*
+!data/sample/
+!data/sample/.gitkeep
+qdrant_storage/
+catalog.db
+# Супутні файли WAL: зʼявилися разом із journal_mode=WAL і містять ті самі
+# дані, що й сам каталог, — зокрема ШЛЯХИ до особистих знімків.
+catalog.db-wal
+catalog.db-shm
+*.db-wal
+*.db-shm
+*.sqlite3
+
+.DS_Store
