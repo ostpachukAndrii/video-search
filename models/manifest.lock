@@ -274,6 +274,51 @@
           "url": "https://raw.githubusercontent.com/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
         }
       ]
+    },
+    "translate_uk_en": {
+      "role": "Переклад запиту uk→en. Спеціалізований, бо LLM-парсер цього не вміє",
+      "source": "hf",
+      "repo_id": "Helsinki-NLP/opus-mt-uk-en",
+      "revision": "1b9a2a0d1aa2a329d8476d2be5c7b0b27d5397b0",
+      "license": "Apache-2.0",
+      "license_url": "https://huggingface.co/Helsinki-NLP/opus-mt-uk-en",
+      "local_dir": "opus-mt-uk-en",
+      "optional": true,
+      "notes": "76 млн параметрів проти 4 млрд у Qwen3, і ВТРИЧІ точніше на тому, що потрібно: 16 правильних із 16 побутових іменників проти 8 у Qwen3-4B. Qwen не знає слова «полуниця» — на прямий запит вона дала «bluegrass», а в конвеєрі видавала «a bench», «a mushroom», «a flower». Багатомовні альтернативи перевірені й відхилені: M2M-100 (MIT) дає 1 з 16, opus-mt-mul-en — 0 з 10; обидві тренувалися на реченнях і на окремих словах розсипаються. Ціна рішення — модель на КОЖНУ пару мов.",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "161fd83fe3a548928daab6a6238970f4245e395528f7be37186b0a4b1e370e55"
+        },
+        {
+          "path": "config.json",
+          "sha256": "767e0b7efd335e781b1856016407265b27893d213730e16b855a45ee85e17eda"
+        },
+        {
+          "path": "generation_config.json",
+          "sha256": "88f6843fde44ee696384494096ed93d245c93dc8dc14a03b9f95fd95ae5968b0"
+        },
+        {
+          "path": "pytorch_model.bin",
+          "sha256": "db67251736c28c6c703ce2ad11fbf2134f0d95b7ef053352d9e9df0f1b7ec633"
+        },
+        {
+          "path": "source.spm",
+          "sha256": "7abd810b2df512e6fe177f8732f6a0b3107614c84cc52aba20d805b4cb0d7b6b"
+        },
+        {
+          "path": "target.spm",
+          "sha256": "4dc9157e60a15b157c2f3d5f892379b03aed111c9fe8ac7cecba5f2aa56379ef"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sha256": "5c27503ec1b2e2fd472a1c6f91369b8615bd50f858185916281971fb2de58311"
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "992107700c8d5f9c1f41fefa5f72ac99050852b39d75f979c4e59344e6d14770"
+        }
+      ]
     }
   }
 }

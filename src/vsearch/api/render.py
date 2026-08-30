@@ -159,14 +159,27 @@ def annotate(
     path = Path(result.path)
     if not path.exists():
         return None
-    try:
-        # Той самий завантажувач, що й при індексації. Інакше пошкоджений
-        # файл, який ми свідомо врятували на індексації, валив би показ —
-        # і слідчий бачив би помилку замість доказу, який система знайшла.
-        image, _ = load_checked(path)
-    except Exception:  # noqa: BLE001 — один нечитабельний файл не ламає видачу
-        logger.warning("не вдалося намалювати %s", path.name)
-        return None
+    # Відео малюється ТИМ САМИМ кадром, який знайшовся. Без цього результат
+    # із відео потрапляв у гілку «не вдалося прочитати» й показувався
+    # заглушкою «файлу немає» — тобто працююча функція виглядала зламаною.
+    from vsearch.ingest.video import VIDEO_SUFFIXES
+
+    if path.suffix.lower() in VIDEO_SUFFIXES:
+        from vsearch.ingest.video import frame_at
+
+        image = frame_at(path, result.ts_ms or 0)
+        if image is None:
+            logger.warning("не вдалося дістати кадр %s", path.name)
+            return None
+    else:
+        try:
+            # Той самий завантажувач, що й при індексації. Інакше пошкоджений
+            # файл, який ми свідомо врятували на індексації, валив би показ —
+            # і слідчий бачив би помилку замість доказу, який система знайшла.
+            image, _ = load_checked(path)
+        except Exception:  # noqa: BLE001 — один нечитабельний файл не ламає видачу
+            logger.warning("не вдалося намалювати %s", path.name)
+            return None
 
     # Зменшуємо ДО малювання, а не після. Інакше рамки й підписи малювалися в
     # роздільності оригіналу (960×1280) і стискалися разом із ним удвічі —
@@ -340,7 +353,27 @@ def format_confidence(value: float) -> str:
 
 
 def caption(result: "SearchResult", rank: int) -> str:
-    """Короткий підпис під зображенням у галереї."""
+    """Мінімальний підпис під зображенням у галереї.
+
+    Три поля, не більше: ранг, впевненість, назва файлу. Решта живе в таблиці
+    поруч, де числа вирівняні в колонки — дублювати їх під картинкою означало
+    б повернути ту саму кашу з десяти фактів в одному рядку, з якої переробка
+    й почалася.
+
+    Назва файлу тут ПОТРІБНА, попри те що вона є і в таблиці: саме за нею
+    впізнають кадр, коли дивляться на картинку, а не на рядок. Для відео
+    поруч стоїть позиція в записі — без неї назва веде до файлу, а не до
+    моменту.
+    """
+    parts = [f"#{rank}", format_confidence(result.probability), Path(result.path).name]
+    if result.ts_ms is not None:
+        seconds = result.ts_ms / 1000
+        parts.append(f"{int(seconds) // 60:02d}:{seconds % 60:04.1f}")
+    return " · ".join(parts)
+
+
+def caption_full(result: "SearchResult", rank: int) -> str:
+    """Повний підпис — лишений для тестів і CLI, у галереї не вживається."""
     parts = [
         f"#{rank}",
         source_label(result),
@@ -392,6 +425,70 @@ def caption(result: "SearchResult", rank: int) -> str:
     if result.ts_ms is not None:
         parts.append(f"{result.ts_ms / 1000:.1f}с")
     return " · ".join(parts)
+
+
+#: Колонки таблиці результатів. Порядок і склад СТАЛІ — у цьому весь сенс.
+#:
+#: Раніше ті самі дані склеювалися в один рядок через « · », і набір полів
+#: змінювався від результату до результату: у одного був «сутності 89%», у
+#: іншого ні, у третього зʼявлялося «⚠ екземплярів». Те саме число щоразу
+#: опинялося в іншій позиції, і порівняти два кадри оком було неможливо — а
+#: при налагодженні це і є основна дія.
+#:
+#: Порожня клітинка чесно означає «значення немає», на відміну від зниклого
+#: шматка речення, який виглядає просто як інший текст.
+TABLE_COLUMNS = [
+    "#", "файл", "текст", "сутності", "детекція",
+    "джерело", "ділянок", "площа", "час", "⚠",
+]
+
+
+def table_row(result: "SearchResult", rank: int) -> list[str]:
+    """Один результат як рядок таблиці. Кожна колонка — одне питання."""
+    named = [r for r in result.regions if getattr(r, "entity", "")]
+    if named:
+        # Коли запит назвав обʼєкти, показуємо їх поіменно: «жінка 96% ·
+        # дитина 81%» відповідає на питання «чи знайдено обох», якого одне
+        # усереднене число не відповідає ніколи.
+        entities = " · ".join(
+            f"{r.entity} {format_confidence(r.entity_score if r.entity_score is not None else r.probability)}"
+            for r in named
+        )
+    elif result.entity_confidence is not None:
+        entities = format_confidence(result.entity_confidence)
+    else:
+        entities = ""
+
+    warnings = []
+    if result.matched_attrs.get("not_grounded"):
+        warnings.append(f"не підтверджено «{result.matched_attrs['not_grounded']}»")
+    if result.matched_attrs.get("instances_found"):
+        warnings.append(f"екземплярів {result.matched_attrs['instances_found']}")
+    if not Path(result.path).exists():
+        warnings.append("файлу немає на диску")
+
+    when = ""
+    if result.ts_ms is not None:
+        seconds = result.ts_ms / 1000
+        when = f"{int(seconds) // 60:02d}:{seconds % 60:04.1f}"
+    shot_frames = result.matched_attrs.get("shot_frames")
+
+    return [
+        str(rank),
+        Path(result.path).name,
+        format_confidence(result.probability),
+        entities,
+        (format_confidence(result.detection_confidence)
+         if result.detection_confidence is not None else ""),
+        SOURCE_MARK.get(source_of(result), "регіон"),
+        # Для відео це кадри СЦЕНИ, для знімка — ділянки кадру. Питання те
+        # саме: скільки ще підтверджень поруч.
+        (f"сцена {shot_frames}" if shot_frames
+         else (str(len(result.regions)) if result.regions else "")),
+        f"{result.bbox[2] * result.bbox[3] * 100:.1f}%" if result.bbox else "",
+        when,
+        "; ".join(warnings),
+    ]
 
 
 def describe_parse(parsed) -> str:

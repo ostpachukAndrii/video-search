@@ -127,11 +127,14 @@ def _through_ui(real_set, query):
     from vsearch.api import ui
 
     last = None
-    for out in ui.do_search(query, profile="balanced", scope="все", limit=6,
-                            use_parser=True, category="", show_weak=False,
-                            best_only=False, refine=False):
+    for out in ui.do_search(query, limit=6, use_parser=True, category="",
+                            show_weak=False, best_only=False, refine=False):
         last = out
-    shots, _parsed, _body, _prov, frames = last
+    shots, rows, _status, _parse, _notices, frames, _dump = last
+    assert len(rows) == len(shots), (
+        f"галерея й таблиця розійшлися: {len(shots)} кадрів проти {len(rows)} рядків — "
+        "це означає, що якийсь результат є в одному поданні й відсутній в іншому"
+    )
     return {"shots": shots, "frames": frames, "query": query}
 
 

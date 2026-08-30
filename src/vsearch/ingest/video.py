@@ -184,3 +184,32 @@ def probe(path: Path | str) -> dict:
             "height": stream.height,
             "frames": stream.frames or 0,
         }
+
+
+def frame_at(path: Path | str, ts_ms: int) -> "Image | None":
+    """Кадр із позиції в часі — з перемотуванням, а не повним декодуванням.
+
+    Потрібне для показу: результат із відео має малюватися тим самим кадром,
+    який знайшовся, інакше в галереї стоїть заглушка «файл недоступний», і
+    головна функція виглядає зламаною.
+
+    `seek` йде до найближчого опорного кадру перед позицією, далі декодуємо
+    вперед до потрібної. Для тригодинного запису це десятки кадрів замість
+    сотень тисяч.
+    """
+    import av
+
+    try:
+        with av.open(str(path)) as container:
+            stream = container.streams.video[0]
+            target = int(ts_ms / 1000 / float(stream.time_base))
+            container.seek(target, stream=stream, backward=True, any_frame=False)
+            last = None
+            for frame in container.decode(stream):
+                last = frame
+                if frame.pts is not None and frame.pts >= target:
+                    return frame.to_image()
+            return last.to_image() if last is not None else None
+    except Exception:  # noqa: BLE001 — показ не мусить валитися через один файл
+        logger.warning("не вдалося дістати кадр %s на %d мс", path, ts_ms, exc_info=True)
+        return None

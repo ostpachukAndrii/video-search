@@ -78,6 +78,14 @@ class Query:
     gains: dict[str, float] = field(default_factory=dict)
     #: Очікуваний розбір запиту (must / must_not) для сценаріїв парсера.
     expected_parse: dict[str, Any] = field(default_factory=dict)
+    #: Відома межа: запит, ціль якого система НЕ дістає, і причина цього
+    #: зафіксована. Не «складний запит», а названий механізм — інакше помітка
+    #: перетвориться на спосіб ховати поломки.
+    #:
+    #: Сценарії мусять перевіряти помітку в ОБИДВА боки: якщо позначений запит
+    #: раптом почав знаходитися, помітку треба зняти, бо інакше вона
+    #: приховуватиме наступну справжню поломку.
+    known_limit: str = ""
     notes: str = ""
 
     @property
@@ -193,6 +201,7 @@ def load(name: str, golden_dir: Path | str | None = None) -> GoldenSet:
             forbidden=frozenset(row.get("forbidden", [])),
             gains={k: float(v) for k, v in row.get("gains", {}).items()},
             expected_parse=row.get("expected_parse", {}),
+            known_limit=row.get("known_limit", ""),
             notes=row.get("notes", ""),
         )
         for row in _read_jsonl(root / QUERIES_FILE)

@@ -52,6 +52,8 @@ Other rules:
   "champagne", "water", "blood", "smoke" — never "a champagne". An
   ungrammatical phrase scores far worse than the bare word: "a champagne"
   matched a real bottle at 9%, while "champagne" matched it at 53%.
+  A countable thing KEEPS its article — "a tank", not bare "tank". Measured:
+  the same crop scored 63.9% for "tank" and 0.05% for "a tank".
 - language: ISO code of the original query (uk, en, he, de, pl, ru, ...).
 - must: objects that must be present, with attributes bound to THAT object.
 - count: how many of that object the frame must contain. Default 1. Set it

@@ -414,6 +414,36 @@ def _with_context(region, factor: float = DETECTION_CONTEXT):
     return Region(x, y, w, h, kind=region.kind, label=region.label)
 
 
+#: У скільки разів рамки можуть різнитися площею, щоб вкладеність ще означала
+#: ТУ САМУ людину. Обличчя всередині постаті — приблизно втричі менше; рамка
+#: на весь кадр більша за людину на порядок.
+#:
+#: Без цієї межі великий регіон поглинав усіх: на кадрі з пʼятьма чоловіками
+#: рамка на 72.7% площі «містила» решту, і показувалася знову одна.
+SAME_INSTANCE_AREA_RATIO = 3.0
+
+
+def _same_instance(a, b) -> bool:
+    """Чи це та сама людина: перекриття АБО співмірна вкладеність.
+
+    Сама лише IoU не бачить вкладених рамок — обличчя всередині голови дає
+    низьке перекриття, і на одного чоловіка малювалося три рамки. Сама лише
+    вкладеність зливає різних людей у велику рамку. Потрібні обидві умови.
+
+    Викликається лише в межах ОДНІЄЇ сутності. Для різних сутностей
+    вкладеність зливати не можна: дитина на руках у жінки лежить усередині її
+    рамки, і це саме те, що треба показати окремо.
+    """
+    if a.iou(b) >= DISPLAY_IOU:
+        return True
+    big, small = (a, b) if a.area_ratio >= b.area_ratio else (b, a)
+    if small.area_ratio <= 0:
+        return False
+    if big.area_ratio / small.area_ratio > SAME_INSTANCE_AREA_RATIO:
+        return False
+    return small.containment(big) >= DISPLAY_CONTAINMENT
+
+
 def _distinct_instances(hits: list[Hit], conditions, limit: int) -> list[Hit]:
     """До `limit` РІЗНИХ підтверджених екземплярів сутності в кадрі.
 
@@ -464,7 +494,16 @@ def _distinct_instances(hits: list[Hit], conditions, limit: int) -> list[Hit]:
             region = Region(*bbox, kind="region")
         except ValueError:
             continue
-        if any(region.iou(other) >= DISPLAY_IOU for other in boxes):
+        # Злиття за перекриттям І за ВКЛАДЕНІСТЮ. Сама лише IoU не бачить
+        # вкладених рамок: обличчя всередині голови всередині постаті дає
+        # низьке перекриття при однакових площах, і на одного чоловіка
+        # малювалося три рамки.
+        #
+        # Тут це безпечно, на відміну від злиття рамок РІЗНИХ сутностей:
+        # дитина на руках у жінки лежить усередині її рамки, і там вкладеність
+        # прибрала б саме те, що треба показати. Ця функція працює в межах
+        # ОДНІЄЇ сутності, де вкладеність означає ту саму людину.
+        if any(_same_instance(region, other) for other in boxes):
             continue
         picked.append(hit)
         boxes.append(region)
@@ -934,6 +973,29 @@ class Searcher:
         if parsed.query_en and parsed.query_en.strip().lower() != query.strip().lower():
             texts.append(parsed.query_en)
 
+        # ТРЕТІЙ канал — спеціалізований переклад. Не заміна LLM, а доповнення,
+        # і це вимір, а не смак: на золотому наборі кожен виграє СВОЇ запити.
+        #
+        #   «полуниця»   LLM 0.00 → OPUS 1.00   (LLM не знає слова)
+        #   «брошка»     LLM 1.00 → OPUS 0.00   (OPUS перекладає буквально)
+        #
+        # LLM видає підписи в тій формі, на якій тренували SigLIP («a girl in a
+        # swimsuit»), але не знає побутової лексики: 8 правильних із 16
+        # іменників. OPUS-MT знає слова (16 із 16), але дає буквальний
+        # переклад. Обирати один означало б втрачати половину запитів.
+        #
+        # Це та сама відповідь, що вже двічі дана на несумісні свідчення
+        # (ADR-013, ADR-019): не обирати, а зливати за рангами.
+        from vsearch.represent import translate as mt
+
+        language = mt.detect_language(query)
+        if language != "en" and mt.is_available(language):
+            translated = mt.translate(query, language)
+            if translated and translated.strip().lower() not in {
+                t.strip().lower() for t in texts
+            }:
+                texts.append(translated)
+
         # Лексичний вектор будується з ОБОХ формулювань: номер чи прізвище
         # переклад не змінює, а от «München» проти «Мюнхен» дає різні терми,
         # і втратити одне з них означало б втратити половину шансів на збіг.
@@ -946,7 +1008,16 @@ class Searcher:
         # може: на «Champagne» парсер видав «a champagne», і ця неграматична
         # форма дала 9% там, де саме слово дає 53%. Канонічним каналом тоді
         # лишається оригінал.
-        canonical_index = 0 if parsed.language == "en" else len(texts) - 1
+        # Канонічний — підпис від LLM (індекс 1), а НЕ останній доданий канал.
+        # Після появи третього каналу «останній» став перекладом OPUS-MT, і
+        # він мовчки забрав собі потрійну вагу разом із переоцінкою верхівки:
+        # видача стала точно такою, ніби LLM-каналу немає взагалі.
+        #
+        # Канонічним має лишатися саме підпис LLM: він у тій формі, на якій
+        # тренували SigLIP («a girl in a swimsuit»), тоді як переклад
+        # буквальний. Переклад входить рівноправним каналом — його сила в
+        # словнику, а не у формі.
+        canonical_index = 0 if parsed.language == "en" else min(1, len(texts) - 1)
         self._canonical_index = canonical_index
         matrix = self.embedder.embed_texts(texts, use_template=use_template)
         # Довіра до перекладу вимірюється ДО того, як він отримає перевагу.
@@ -1156,7 +1227,6 @@ class Searcher:
         # регіонах (ADR-013): свідчення має важити один раз.
         results = _collapse_shots(results)
         pool = [r.score for r in results]
-        results = results[:limit]
 
         # Слабкі збіги ПОКАЗУЮТЬСЯ, лише позначаються. Спокуса відсіяти їх
         # велика — на запит «білий велосипед» система підсвічувала людей у
@@ -1191,6 +1261,19 @@ class Searcher:
         if min_probability > 0:
             hidden = {id(r) for r in weak}
             results = [r for r in results if id(r) not in hidden]
+
+        # Ліміт застосовується ПІСЛЯ відсіву слабких, а не до нього.
+        #
+        # Зворотний порядок давав те, що користувач і побачив: запит на 40
+        # результатів піднімав 37 кандидатів, з них 27 виявлялися слабкими, і
+        # на екрані лишалося 10. Тобто число в полі «Результатів» означало не
+        # «скільки показати», а «скільки взяти ПЕРЕД тим, як частину викинути»
+        # — і чим більше просив користувач, тим менша частка доходила.
+        #
+        # Це та сама плутанина, що вже виправлялася для глибини відбору:
+        # скільки ПОКАЗАТИ — рішення інтерфейсу, і застосовуватися воно має
+        # останнім.
+        results = results[:limit]
         if self._last_total and not degraded and self._last_total > len(results):
             notice = (notice + " " if notice else "") + (
                 f"Умовам відповідає кадрів: {self._last_total}, показано {len(results)}. "
@@ -1222,11 +1305,16 @@ class Searcher:
         )
 
     def _parse(self, query: str, enabled: bool) -> StructuredQuery:
+        """Структурний розбір запиту. Переклад — окремим каналом у `search`."""
+        parsed = EMPTY if not enabled else None
+        if enabled:
+            from vsearch.search.parse import get_parser
+
+            parsed = get_parser().parse_or_empty(query)
+
         if not enabled:
             return EMPTY.model_copy(update={"query_en": query})
-        from vsearch.search.parse import get_parser
-
-        return get_parser().parse_or_empty(query)
+        return parsed
 
     def _dense_pass(
         self,
@@ -1546,8 +1634,17 @@ class Searcher:
                 # Ранжування лишається за цією ділянкою, а підпис отримує та,
                 # яку показуємо: найпомітніша серед упевнених у цій сутності.
                 wanted = entity.count if entity is not None else 1
+                # Показуємо ВСІ різні екземпляри сутності, а не стільки,
+                # скільки просив запит. Кількість керує ПОПЕРЕДЖЕННЯМ, а не
+                # показом: питання «чи знайдено обох» — це саме те, на що
+                # рамки й мають відповідати.
+                #
+                # Раніше межею показу був `count`, тобто на звичайному запиті
+                # («чоловік в окулярах») обводився РІВНО ОДИН, хоча в кадрі
+                # система впевнено знаходила пʼятьох. Виглядало це так, ніби
+                # решту вона не побачила.
                 instances = _distinct_instances(
-                    shown.get(key, [hit]), raw_conditions, wanted
+                    shown.get(key, [hit]), raw_conditions, MAX_SHOWN_REGIONS
                 )
                 if len(instances) < wanted:
                     # Кадр не дав стільки РІЗНИХ екземплярів, скільки просить
