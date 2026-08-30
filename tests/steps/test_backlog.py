@@ -18,5 +18,7 @@ from pytest_bdd import scenarios
 # semantic.feature і multilingual.feature переїхали в test_search_steps.py —
 # вони реалізовані на M1.
 scenarios("faces.feature")
-scenarios("video.feature")
+# video.feature переїхав у test_video_steps.py на M5a. Тут його лишати не
+# можна: збирач підхопив би вже РЕАЛІЗОВАНІ сценарії без кроків і зробив їх
+# червоними — тобто backlog почав би стверджувати, що зробленого немає.
 scenarios("performance.feature")

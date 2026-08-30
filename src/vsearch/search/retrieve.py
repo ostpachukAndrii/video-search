@@ -490,6 +490,34 @@ def _prominent(hits: list[Hit], conditions) -> Hit:
     return max(confident, key=lambda h: float(h.payload.get("area_ratio") or 0.0))
 
 
+def _collapse_shots(results: list["SearchResult"]) -> list["SearchResult"]:
+    """Лишити по одному найкращому кадру на сцену, зберігши порядок.
+
+    Сцена — `shot_id`, проставлений при відборі ключових кадрів: сусідні кадри
+    без зміни плану належать одній. Для знімків `shot_id` немає, і вони
+    проходять недоторканими.
+
+    Скільки кадрів сцени відповіли — не викидається, а йде в провенанс: це
+    відповідь на питання «як довго це тривало», яке в матеріалах справи важить
+    більше за сам факт збігу.
+    """
+    kept: list[SearchResult] = []
+    seen: dict[str, SearchResult] = {}
+    for result in results:
+        shot = result.provenance.get("shot_id") or result.matched_attrs.get("shot_id")
+        if not shot:
+            kept.append(result)
+            continue
+        first = seen.get(shot)
+        if first is None:
+            seen[shot] = result
+            kept.append(result)
+            first = result
+        count = int(first.matched_attrs.get("shot_frames", 1))
+        first.matched_attrs = {**first.matched_attrs, "shot_frames": count + (first is not result)}
+    return kept
+
+
 def _fuse_evidence(results: list["SearchResult"]) -> list["SearchResult"]:
     """Порядок за злиттям ДВОХ свідчень: схожості з текстом і впевненості в
     названих сутностях.
@@ -1118,6 +1146,15 @@ class Searcher:
         # Ліміт показу — ОСТАННІЙ крок. До нього всі етапи працюють на повній
         # глибині, інакше кількість запитаних результатів мовчки визначала б,
         # які кандидати взагалі дійдуть до переоцінки.
+        # Сцена займає ОДНУ позицію. Без цього ролик із двадцяти ключових
+        # кадрів забирає всю верхівку: чотири з шести перших місць на «dog»
+        # були кадрами одного відео з інтервалом у дві секунди. Для слідчого
+        # це не двадцять знахідок, а одна подія — і решта видачі при цьому
+        # витісняється.
+        #
+        # Це та сама причина, з якої ранг рахується по КАДРАХ, а не по
+        # регіонах (ADR-013): свідчення має важити один раз.
+        results = _collapse_shots(results)
         pool = [r.score for r in results]
         results = results[:limit]
 
@@ -2013,6 +2050,7 @@ class Searcher:
             bbox=tuple(bbox) if bbox else None,
             matched_attrs=(
                 {"region": payload["region_type"], "label": payload.get("label", "")}
+                | ({"shot_id": payload["shot_id"]} if payload.get("shot_id") else {})
                 | (
                     {"instances_found": payload["instances_found"]}
                     if payload.get("instances_found")
@@ -2021,7 +2059,10 @@ class Searcher:
                 if payload.get("region_type")
                 else {}
             ),
-            provenance=provenance,
+            provenance=(
+                {**provenance, "shot_id": payload["shot_id"]}
+                if payload.get("shot_id") else provenance
+            ),
         )
 
 

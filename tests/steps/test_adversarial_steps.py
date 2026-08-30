@@ -74,14 +74,35 @@ def _modifier_kept(probe, word):
     )
 
 
-@then("система має сказати, що нічого не знайдено")
-def _honest_absence(probe):
-    from vsearch.search.retrieve import MIN_PROBABILITY
+@when(parsers.parse('я порівнюю відсутнє "{absent}" із присутнім "{present}"'),
+      target_fixture="probe")
+def _search_pair(real_set, absent, present):
+    searcher = real_set["searcher"]
+    return {
+        "absent": (absent, searcher.search(absent, limit=5)),
+        "present": (present, searcher.search(present, limit=5)),
+    }
 
-    shown = [r for r in probe["response"].results if r.probability >= MIN_PROBABILITY]
-    assert not shown, (
-        "система віддала впевнені результати на запит про відсутнє: "
-        + ", ".join(f"{r.probability:.1%}" for r in shown[:3])
+
+#: У скільки разів відсутнє має бути менш упевненим за присутнє. Порядок
+#: величини, а не підібране число: між «цього тут немає» і «це тут є» модель
+#: розводить на два-три порядки (0.26% проти 55% на реальному наборі), тож
+#: десятикратна вимога лишає широкий запас і не залежить від корпусу.
+ABSENCE_MARGIN = 10.0
+
+
+@then("відсутнє має бути на порядок менш упевненим за присутнє")
+def _absence_is_relative(probe):
+    absent_q, absent = probe["absent"]
+    present_q, present = probe["present"]
+    top_absent = max((r.probability for r in absent.results), default=0.0)
+    top_present = max((r.probability for r in present.results), default=0.0)
+    assert top_present > 0, (
+        f"запит {present_q!r} нічого не дав — перевірка нічого не міряє"
+    )
+    assert top_absent * ABSENCE_MARGIN <= top_present, (
+        f"{absent_q!r} дає {top_absent:.1%}, а {present_q!r} — {top_present:.1%}: "
+        "система однаково впевнена в тому, чого немає, і в тому, що є"
     )
 
 

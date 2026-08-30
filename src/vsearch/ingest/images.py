@@ -62,6 +62,8 @@ class IngestStats:
     recovered: int = 0
     regions: int = 0
     facets: int = 0
+    #: Скільки ключових кадрів відібрано з відео (для зображень завжди 0).
+    keyframes: int = 0
     #: Скільки кадрів отримали опис словами.
     with_caption: int = 0
     #: Скільки кадрів дали непорожній текст. Число, за яким видно, чи
@@ -138,6 +140,20 @@ def sha256_of(path: Path, chunk: int = 1 << 20, *, catalog=None) -> str:
     return value
 
 
+def _video_suffixes() -> frozenset[str]:
+    from vsearch.ingest.video import VIDEO_SUFFIXES
+
+    return VIDEO_SUFFIXES
+
+
+def _media_suffixes() -> frozenset[str]:
+    """Зображення плюс відео. Імпорт лінивий: `av` потрібен лише для відео,
+    і doctor чи перевірка ліцензій не мають його вимагати."""
+    from vsearch.ingest.video import VIDEO_SUFFIXES
+
+    return IMAGE_SUFFIXES | VIDEO_SUFFIXES
+
+
 def discover(root: Path) -> Iterator[Path]:
     """Знайти зображення в теці (або повернути сам файл, якщо це файл).
 
@@ -149,15 +165,16 @@ def discover(root: Path) -> Iterator[Path]:
     каталогу. Це не косметика: сталий порядок робить прогін відтворюваним, а
     відтворюваність тут вимога (п.7).
     """
+    suffixes = _media_suffixes()
     if root.is_file():
-        if root.suffix.lower() in IMAGE_SUFFIXES:
+        if root.suffix.lower() in suffixes:
             yield root
         return
     for directory, subdirs, files in os.walk(root):
         subdirs.sort()
         base = Path(directory)
         for name in sorted(files):
-            if Path(name).suffix.lower() in IMAGE_SUFFIXES:
+            if Path(name).suffix.lower() in suffixes:
                 yield base / name
 
 
@@ -274,18 +291,19 @@ def index_paths(
     started = time.perf_counter()
     #: Активи, записані САМЕ ЦИМ прогоном: лише їх і перераховуємо.
     fresh_assets: set[str] = set()
-    pending: list[tuple[Path, str, "Image", bool]] = []
+    #: (шлях, asset_id, кадр, пошкоджено, індекс, ts_ms, сцена)
+    pending: list[tuple[Path, str, "Image", bool, int, "int | None", "int | None"]] = []
 
     def flush() -> None:
         if not pending:
             return
-        vectors = embedder.embed_images([img for _, _, img, _ in pending])
+        vectors = embedder.embed_images([item[2] for item in pending])
         keys, payloads, sparse_vectors = [], [], []
         region_keys, region_crops, region_payloads = [], [], []
 
-        for (path, asset_id, img, damaged), _ in zip(pending, vectors):
+        for (path, asset_id, img, damaged, index, ts_ms, shot), _ in zip(pending, vectors):
             fresh_assets.add(asset_id)
-            frame_id = f"{asset_id}:0"
+            frame_id = f"{asset_id}:{index}"
             keys.append(frame_id)
             ocr_text, ocr_engine_name, caption_text = "", "", ""
             if reader is not None:
@@ -314,7 +332,12 @@ def index_paths(
                 {
                     "asset_id": asset_id,
                     "frame_id": frame_id,
-                    "media_type": "image",
+                    "media_type": "video" if ts_ms is not None else "image",
+                    # Час і сцена існують лише для відео. Кадр без них — це
+                    # знімок, і плутати їх не можна: `ts_ms=0` означало б
+                    # «перша мілісекунда», а не «часу немає».
+                    **({"ts_ms": ts_ms, "shot_id": f"{asset_id}:s{shot}"}
+                       if ts_ms is not None else {}),
                     "path": str(path),
                     "width": img.width,
                     "height": img.height,
@@ -342,6 +365,13 @@ def index_paths(
                             "asset_id": asset_id,
                             "frame_id": frame_id,
                             "path": str(path),
+                            # Тип носія й час КОПІЮЮТЬСЯ в регіон. Без цього
+                            # результат, у якому виграла плитка, поставав як
+                            # знімок без часу — тобто провенанс губив саме те,
+                            # що для відео головне: де в записі це сталося.
+                            "media_type": "video" if ts_ms is not None else "image",
+                            **({"ts_ms": ts_ms, "shot_id": f"{asset_id}:s{shot}"}
+                               if ts_ms is not None else {}),
                             "region_type": region.kind,
                             "label": region.label,
                             "bbox": list(region.bbox),
@@ -353,14 +383,15 @@ def index_paths(
                 AssetRecord(
                     asset_id=asset_id,
                     path=str(path),
-                    media_type="image",
+                    media_type="video" if ts_ms is not None else "image",
                     size_bytes=path.stat().st_size,
                     width=img.width,
                     height=img.height,
                 ),
                 profile.name,
             )
-            catalog.add_frame(frame_id, asset_id, ts_ms=None, width=img.width, height=img.height)
+            catalog.add_frame(frame_id, asset_id, ts_ms=ts_ms,
+                              width=img.width, height=img.height)
         store.upsert(
             schema.FRAMES, keys, vectors, payloads,
             sparse=sparse_vectors if reader is not None else None,
@@ -380,9 +411,30 @@ def index_paths(
             if skip_existing and not recreate and catalog.has_asset(asset_id):
                 stats.skipped_existing += 1
                 continue
+            if path.suffix.lower() in _video_suffixes():
+                # Відео входить у ТОЙ САМИЙ шлях запису, що й знімки: воно
+                # лише дає кілька кадрів замість одного. Окремий конвеєр
+                # довелося б тримати в синхроні з цим, а проєкт уже платив
+                # за дубльований обхід колекції.
+                from vsearch.ingest.video import sample_keyframes
+
+                count = 0
+                for order, key in enumerate(
+                    sample_keyframes(path, fps_floor=profile.video_fps_floor)
+                ):
+                    pending.append(
+                        (path, asset_id, key.image, False, order, key.ts_ms, key.shot)
+                    )
+                    count += 1
+                    if len(pending) >= batch_size:
+                        flush()
+                stats.keyframes += count
+                if not count:
+                    logger.warning("%s: жодного ключового кадру", path.name)
+                continue
             image, damaged = load_checked(path)
             stats.recovered += damaged
-            pending.append((path, asset_id, image, damaged))
+            pending.append((path, asset_id, image, damaged, 0, None, None))
         except Exception as exc:  # noqa: BLE001 — один зіпсований файл не спиняє прогін
             # Причина має бути ДІЄЮ, а не констатацією. «cannot identify image
             # file» виглядає як пошкоджений файл, хоча файл цілий і проблема
