@@ -68,8 +68,15 @@ def do_search(query: str, limit: int, use_parser: bool, category: str,
     # None падав просто у видачу.
     query = (query or "").strip()
     category = (category or "").strip()
+    # Знімок ЗАПИТУ разом із параметрами: без них звіт не відтворити.
+    settings = {
+        "limit": int(limit), "розбір": bool(use_parser), "категорія": category,
+        "слабкі": bool(show_weak), "одна рамка": bool(best_only),
+        "уточнення": bool(refine),
+        "схоже на": len(similar or []), "не схоже": len(unlike or []),
+    }
     if not query:
-        yield ([], [], "_Введіть запит._", "", "", [], "")
+        yield ([], [], "_Введіть запит._", "", "", [], {})
         return
 
     started = time.perf_counter()
@@ -86,11 +93,11 @@ def do_search(query: str, limit: int, use_parser: bool, category: str,
             # кеш префікса. Розбір коштував 10 с там, де мав коштувати 1.8.
             parser = get_parser()
             if parser.is_available() and not parser.should_bypass(query):
-                yield ([], [], "⏳ розбираю запит…", "", "", [], "")
+                yield ([], [], "⏳ розбираю запит…", "", "", [], {})
                 parsed_preview = render.describe_parse(parser.parse(query))
         except Exception:  # noqa: BLE001 — розбір не мусить валити пошук
             logger.debug("попередній розбір не вдався", exc_info=True)
-    yield ([], [], "⏳ шукаю по індексу…", parsed_preview, "", [], "")
+    yield ([], [], "⏳ шукаю по індексу…", parsed_preview, "", [], {})
 
     try:
         response = _searcher().search(
@@ -104,11 +111,12 @@ def do_search(query: str, limit: int, use_parser: bool, category: str,
         )
     except Exception as exc:  # noqa: BLE001 — помилку показуємо, а не ховаємо
         logger.exception("пошук не вдався")
-        yield ([], [], f"❌ {type(exc).__name__}: {exc}", parsed_preview, "", [], "")
+        yield ([], [], f"❌ {type(exc).__name__}: {exc}", parsed_preview, "", [], {})
         return
 
     def package(resp, extra: str = ""):
         shots, rows = [], []
+        saved_notes = _notes()
         for rank, res in enumerate(resp.results, start=1):
             picture = render.annotate(res, best_only=best_only)
             if picture is None:
@@ -116,13 +124,21 @@ def do_search(query: str, limit: int, use_parser: bool, category: str,
                 # одно є знахідкою. Мовчазний пропуск зсував нумерацію.
                 picture = render.placeholder(res)
             shots.append((picture, render.caption(res, rank)))
-            rows.append(render.table_row(res, rank))
+            row = render.table_row(res, rank)
+            # Збережений коментар ПОВЕРТАЄТЬСЯ в таблицю: опис, написаний
+            # одного разу, має жити далі, інакше його доводиться писати
+            # наново щоразу, коли кадр знову спливає у видачі.
+            row[render.COMMENT_COLUMN] = saved_notes.get(res.asset_id, "")
+            rows.append(row)
         status = _status_line(resp, started, extra)
         notes = "\n\n".join(
             f"> {n}" for n in _notices(resp) if n
         )
         return (shots, rows, status, render.describe_parse(resp.parsed), notes,
-                [r.frame_id for r in resp.results], _debug_dump(resp, rows, started))
+                [r.frame_id for r in resp.results],
+                {"header": _dump_header(resp, started, settings),
+                 "boxes": _dump_boxes(resp),
+                 "assets": [(r.asset_id, str(r.path)) for r in resp.results]})
 
     yield package(response, "уточнюю детекцією…" if refine and response.results else "")
     if not refine or not response.results:
@@ -148,6 +164,138 @@ def do_search(query: str, limit: int, use_parser: bool, category: str,
     except Exception as exc:  # noqa: BLE001 — уточнення не мусить валити видачу
         logger.exception("уточнення не вдалося")
         yield package(response, f"уточнення не вдалося: {exc}")
+
+
+def _notes() -> dict[str, str]:
+    """Збережені коментарі. Помилка каталогу не мусить валити пошук."""
+    try:
+        from vsearch.index.catalog import Catalog
+
+        return Catalog().notes()
+    except Exception:  # noqa: BLE001
+        logger.debug("не вдалося прочитати коментарі", exc_info=True)
+        return {}
+
+
+def save_notes(meta: dict, table) -> str:
+    """Записати коментарі з таблиці до каталогу.
+
+    Ключем є `asset_id` з видачі, а не назва файлу з таблиці: назву людина
+    може виправити руками, і тоді коментар пристав би не до того кадру.
+    """
+    from vsearch.index.catalog import Catalog
+
+    assets = (meta or {}).get("assets") or []
+    rows = _rows_of(table)
+    if not assets or not rows:
+        return "_Нема чого зберігати: спершу виконайте пошук._"
+    catalog = Catalog()
+    written = cleared = 0
+    for row, (asset_id, path) in zip(rows, assets):
+        if len(row) <= render.COMMENT_COLUMN:
+            continue
+        note = str(row[render.COMMENT_COLUMN] or "").strip()
+        catalog.save_note(asset_id, note, path)
+        written += bool(note)
+        cleared += not bool(note)
+    return (f"✅ збережено коментарів: **{written}**"
+            + (f" · очищено: {cleared}" if cleared else ""))
+
+
+def _dump_header(resp, started: float, settings: dict | None = None) -> str:
+    """Незмінна частина звіту: запит, ЙОГО ПАРАМЕТРИ, розбір, режим.
+
+    Параметри тут не для повноти, а щоб видачу можна було ВІДТВОРИТИ.
+    Той самий текст із увімкненим уточненням і без нього дає різні рамки,
+    а з іншим лімітом — інший склад результатів. Звіт без цих чисел
+    змушує здогадуватися, що саме бачила людина.
+    """
+    parsed = resp.parsed
+    lines = [
+        f"запит:     {resp.query!r}",
+        f"query_en:  {(parsed.query_en if parsed else None)!r}",
+    ]
+    if parsed and (parsed.must or parsed.must_not):
+        lines.append("must:      " + repr([
+            (e.object.value, [(a.name.value, a.value) for a in e.attributes],
+             *([f"×{e.count}"] if e.count > 1 else []))
+            for e in parsed.must
+        ]))
+        if parsed.must_not:
+            lines.append("must_not:  " + repr([
+                (e.object.value, [(a.name.value, a.value) for a in e.attributes])
+                for e in parsed.must_not
+            ]))
+    lines.append(
+        f"режим:     {'жорсткий' if resp.is_strict else 'мʼякий'}"
+        f" · збігів {resp.total_matches or len(resp.results)}"
+        f" · показано {len(resp.results)}"
+        f" · {(time.perf_counter() - started):.1f} с"
+    )
+    if settings:
+        lines.append("параметри: " + " · ".join(
+            f"{k}={v}" for k, v in settings.items() if v not in ("", None, False, [])
+        ) or "параметри: типові")
+    if resp.notice:
+        lines.append(f"примітка:  {resp.notice}")
+    lines.append(f"індекс:    {settings.get('_index', '')}" if settings and
+                 settings.get("_index") else "")
+    return "\n".join(l for l in lines if l)
+
+
+def _dump_boxes(resp) -> str:
+    """Рамки: для дефектів показу вони і є предметом розмови."""
+    lines = []
+    for rank, res in enumerate(resp.results, start=1):
+        for g in (r for r in res.regions if getattr(r, "entity", "")):
+            score = f"{g.entity_score:.2f}" if g.entity_score is not None else "—"
+            lines.append(
+                f"#{rank} {g.entity!r} bbox={[round(v, 3) for v in g.bbox]} "
+                f"площа {g.bbox[2] * g.bbox[3]:.1%} фасет {score}"
+            )
+    return "\n".join(lines)
+
+
+def build_report(header: str, table, boxes: str) -> str:
+    """Звіт із ТАБЛИЦІ, яку користувач щойно редагував.
+
+    Збирається на вимогу, а не разом із пошуком: коментарі дописуються ПІСЛЯ
+    того, як людина подивилася на кадри. Саме ці коментарі й перетворюються
+    потім на мітки золотого набору — а цим набором тут перевіряється все.
+    """
+    rows = _rows_of(table)
+    if not rows:
+        return header or "_Спершу виконайте пошук._"
+    header_cells = render.TABLE_COLUMNS
+    grid = [header_cells] + [[str(c) if c is not None else "" for c in r] for r in rows]
+    widths = [max(len(row[i]) for row in grid) for i in range(len(header_cells))]
+    table_text = "\n".join(
+        "  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip() for row in grid
+    )
+    notes = [
+        f"#{r[0]} {r[1]}: {r[render.COMMENT_COLUMN]}"
+        for r in rows
+        if len(r) > render.COMMENT_COLUMN and str(r[render.COMMENT_COLUMN]).strip()
+    ]
+    parts = [header, "", table_text]
+    if boxes:
+        parts += ["", boxes]
+    if notes:
+        # Коментарі ПОВТОРЮЮТЬСЯ окремим блоком: у широкій таблиці їх легко
+        # не помітити, а саме вони — головне в цьому звіті.
+        parts += ["", "коментарі:"] + [f"  {n}" for n in notes]
+    return "\n".join(parts)
+
+
+def _rows_of(table) -> list[list]:
+    """Рядки з того, що віддає Gradio: DataFrame, dict або список."""
+    if table is None:
+        return []
+    if hasattr(table, "values"):  # pandas.DataFrame
+        return [list(r) for r in table.values.tolist()]
+    if isinstance(table, dict):
+        return [list(r) for r in table.get("data", [])]
+    return [list(r) for r in table]
 
 
 def _debug_dump(resp, rows, started: float) -> str:
@@ -485,18 +633,38 @@ def build():
                     label=None, show_label=False, columns=6, height=340,
                     object_fit="contain", scale=1, allow_preview=True,
                 )
+            # РЕДАГОВНА: остання колонка «коментар» заповнюється руками, і саме
+            # ці коментарі перетворюються потім на мітки золотого набору.
             table = gr.Dataframe(
                 headers=render.TABLE_COLUMNS, datatype=["str"] * len(render.TABLE_COLUMNS),
-                interactive=False, wrap=True, elem_classes="vs-table",
+                interactive=True, wrap=True, elem_classes="vs-table",
                 label=None, show_label=False,
+                # Коментар — найширша колонка: у неї пишуть речення, а решта
+                # тримає числа. Однакова ширина робила поле для тексту вужчим
+                # за поле для «6.8%».
+                column_widths=["4%", "20%", "6%", "14%", "7%", "8%", "7%", "6%",
+                               "6%", "10%", "32%"],
             )
+
+            # Збереження стоїть ПРИ ТАБЛИЦІ, а не у звіті. Це різні дії:
+            # коментар зберігають, щоб він жив далі й повертався на цей кадр у
+            # наступних запитах, а звіт збирають, щоб кудись відправити.
+            # Сховане під «копіюванням», збереження виглядало як його частина.
+            with gr.Row():
+                save_btn = gr.Button("Зберегти коментарі", variant="primary", size="sm")
+                save_out = gr.Markdown()
 
             with gr.Accordion("Розбір запиту", open=False):
                 parse_view = gr.Markdown()
-            with gr.Accordion("Скопіювати для дебагу", open=False):
+            with gr.Accordion("Звіт для копіювання", open=False):
+                gr.Markdown(
+                    "Звіт іде разом із запитом, його параметрами, розбором, "
+                    "таблицею й рамками — щоб видачу можна було відтворити."
+                )
+                report_btn = gr.Button("Зібрати звіт", variant="primary", size="sm")
                 debug_dump = gr.Code(
-                    label=None, show_label=False, language=None, lines=14,
-                    interactive=False,
+                    label=None, show_label=False, language=None, lines=16,
+                    interactive=True,
                 )
             with gr.Accordion("Як читати результати", open=False):
                 gr.Markdown(HELP)
@@ -504,13 +672,16 @@ def build():
             gr.Examples(EXAMPLES, inputs=[query], label="Приклади")
 
             last_frames = gr.State([])
+            #: Незмінна частина звіту (запит, розбір, рамки). Таблиця береться
+            #: з екрана в момент збирання, бо до того часу вона вже змінена.
+            dump_meta = gr.State({})
             similar = gr.State([])
             unlike = gr.State([])
 
             inputs = [query, limit, use_parser, category, show_weak, best_only,
                       refine, similar, unlike]
             outputs = [gallery, table, status, parse_view, notices, last_frames,
-                       debug_dump]
+                       dump_meta]
             run.click(do_search, inputs, outputs)
             query.submit(do_search, inputs, outputs)
 
@@ -521,14 +692,50 @@ def build():
                 номери, вичитані з підпису. Номер до того ж означав РІЗНІ
                 кадри на різних запитах, бо стан перезаписувався видачею.
                 """
-                if not frames or evt.index is None or evt.index >= len(frames):
-                    return chosen, f"Зразків: {len(chosen)}"
-                frame = frames[evt.index]
+                # Індекс приходить по-різному залежно від компонента й версії:
+                # ціле число, список [рядок, колонка] або None після
+                # програмного оновлення галереї. Порівнювати список із числом
+                # означало б падати просто у видачу.
+                index = getattr(evt, "index", None)
+                if isinstance(index, (list, tuple)):
+                    index = index[0] if index else None
+                try:
+                    index = int(index)
+                except (TypeError, ValueError):
+                    index = None
+                chosen = list(chosen or [])
+                if not frames or index is None or not (0 <= index < len(frames)):
+                    return chosen, (f"Зразків: {len(chosen)}" if chosen else "Зразків: —")
+                frame = frames[index]
                 picked = [f for f in chosen if f != frame]
                 if len(picked) == len(chosen):
                     picked.append(frame)
                 return picked, (f"Зразків: {len(picked)}" if picked else "Зразків: —")
 
+            report_btn.click(
+                lambda meta, tbl: build_report(
+                    (meta or {}).get("header", ""), tbl, (meta or {}).get("boxes", "")
+                ),
+                [dump_meta, table], debug_dump,
+            )
+            def _focus_row(evt: gr.SelectData):
+                """Клік по рядку показує ЙОГО фото.
+
+                Без цього коментувати незручно: таблиця й галерея живуть
+                окремо, і щоб зіставити рядок із кадром, доводиться рахувати
+                позиції очима.
+                """
+                index = getattr(evt, "index", None)
+                if isinstance(index, (list, tuple)):
+                    index = index[0] if index else 0
+                try:
+                    index = int(index)
+                except (TypeError, ValueError):
+                    return gr.skip()
+                return gr.update(selected_index=max(0, index))
+
+            table.select(_focus_row, None, gallery)
+            save_btn.click(save_notes, [dump_meta, table], save_out)
             gallery.select(_pick, [last_frames, similar], [similar, similar_view])
             clear_fb.click(lambda: ([], "Зразків: —"), None, [similar, similar_view])
 

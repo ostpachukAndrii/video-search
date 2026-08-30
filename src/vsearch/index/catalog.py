@@ -67,6 +67,20 @@ CREATE TABLE IF NOT EXISTS file_hashes (
     sha256 TEXT NOT NULL
 );
 
+-- Коментарі людини до конкретних активів. Це ЗАРОДОК РОЗМІТКИ: майже всі
+-- дефекти цього проєкту знайдені тим, що хтось подивився на видачу й описав
+-- словами, що з нею не так. Такий опис має переживати запит, інакше його
+-- доводиться писати наново щоразу, коли кадр знову спливає.
+--
+-- Ключ — asset_id (sha256 вмісту), а не шлях: той самий знімок може лежати в
+-- двох теках, і коментар має бути про ЗОБРАЖЕННЯ, а не про файл.
+CREATE TABLE IF NOT EXISTS notes (
+    asset_id   TEXT PRIMARY KEY,
+    path       TEXT NOT NULL DEFAULT '',
+    note       TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS prototypes (
     name        TEXT PRIMARY KEY,
     kind        TEXT NOT NULL,             -- category | attribute
@@ -231,6 +245,83 @@ class Catalog:
                 (key, json.dumps({"threshold": threshold, "points": points})),
             )
             conn.commit()
+
+    def save_note(self, asset_id: str, note: str, path: str = "") -> None:
+        """Зберегти або прибрати коментар до активу.
+
+        Порожній текст ВИДАЛЯЄ запис, а не зберігає порожнечу: інакше
+        «я стер коментар» і «коментаря не було» стали б різними станами з
+        однаковим виглядом.
+        """
+        import time as _time
+
+        note = (note or "").strip()
+        with self._session() as conn:
+            if not note:
+                conn.execute("DELETE FROM notes WHERE asset_id=?", (asset_id,))
+            else:
+                conn.execute(
+                    "INSERT INTO notes(asset_id, path, note, updated_at) "
+                    "VALUES(?,?,?,?) ON CONFLICT(asset_id) DO UPDATE SET "
+                    "note=excluded.note, path=excluded.path, "
+                    "updated_at=excluded.updated_at",
+                    (asset_id, path, note, int(_time.time())),
+                )
+            conn.commit()
+
+    def notes(self) -> dict[str, str]:
+        """Усі коментарі: `asset_id -> текст`."""
+        with self._session() as conn:
+            rows = conn.execute("SELECT asset_id, note FROM notes").fetchall()
+        return {r["asset_id"]: r["note"] for r in rows}
+
+    def notes_with_state(self) -> list[dict[str, Any]]:
+        """Коментарі разом зі станом активу, якого вони стосуються.
+
+        Коментар прикріплений до sha256 ВМІСТУ, тож підмінити фото й отримати
+        чужий опис неможливо: у нового вмісту інший `asset_id`, і старий
+        коментар до нього просто не підходить.
+
+        Але старий запис при цьому нікуди не дівається й далі показує шлях,
+        за яким тепер лежить ІНШЕ зображення. Мовчазно це виглядало б як
+        актуальний коментар до нового фото — тому стан обчислюється й
+        називається:
+
+        * `актуальний` — актив із таким вмістом є в каталозі;
+        * `вміст змінився` — файл за шляхом існує, але його sha256 інший;
+        * `файлу немає` — шлях зник;
+        * `поза індексом` — вмісту в каталозі немає, а шлях невідомий.
+        """
+        from pathlib import Path as _Path
+
+        with self._session() as conn:
+            rows = conn.execute(
+                "SELECT asset_id, path, note, updated_at FROM notes "
+                "ORDER BY updated_at DESC"
+            ).fetchall()
+            known = {r["asset_id"] for r in conn.execute("SELECT asset_id FROM assets")}
+
+        out = []
+        for row in rows:
+            asset_id, path = row["asset_id"], row["path"]
+            state = "актуальний" if asset_id in known else "поза індексом"
+            if state != "актуальний" and path:
+                file = _Path(path)
+                if not file.exists():
+                    state = "файлу немає"
+                else:
+                    # Хеш рахується ЛИШЕ для підозрілих записів: перечитувати
+                    # кожен файл заради переліку коментарів було б тією самою
+                    # вартістю, яку M7e щойно прибрав з індексації.
+                    from vsearch.ingest.images import sha256_of
+
+                    state = ("актуальний" if sha256_of(file, catalog=self) == asset_id
+                             else "вміст змінився")
+            out.append({
+                "asset_id": asset_id, "path": path, "note": row["note"],
+                "updated_at": row["updated_at"], "state": state,
+            })
+        return out
 
     def assert_compatible(self, signature: dict[str, Any]) -> None:
         """Звірити параметри індексу. Порожній індекс приймає будь-який підпис."""

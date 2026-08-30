@@ -382,6 +382,11 @@ def build_parser() -> argparse.ArgumentParser:
     golden.add_argument("--show-missing", action="store_true", help="перелічити відсутні медіа")
     golden.set_defaults(func=_cmd_golden)
 
+    notes = sub.add_parser(
+        "notes", help="коментарі, залишені в інтерфейсі до конкретних кадрів"
+    )
+    notes.set_defaults(func=cmd_notes)
+
     categories = sub.add_parser("categories", help="перелік категорій та атрибутів (п.4)")
     categories.add_argument("-v", "--verbose", action="store_true", help="показати формулювання")
     categories.set_defaults(func=_cmd_categories)
@@ -435,6 +440,39 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=_cmd_serve)
 
     return parser
+
+
+def cmd_notes(args) -> int:
+    """Показати коментарі, залишені людиною в інтерфейсі.
+
+    Це зародок розмітки: майже кожен дефект тут знайдено тим, що хтось
+    подивився на видачу й описав словами, що з нею не так. Команда дає
+    прочитати ці описи разом, щоб перетворити їх на мітки золотого набору.
+    """
+    from vsearch.index.catalog import Catalog
+
+    catalog = Catalog()
+    rows = catalog.notes()
+    if not rows:
+        print("Коментарів немає. Додайте їх у колонці «коментар» в інтерфейсі.")
+        return 0
+    found = catalog.notes_with_state()
+    stale = [r for r in found if r["state"] != "актуальний"]
+    print(f"коментарів: {len(found)}"
+          + (f" · потребують уваги: {len(stale)}" if stale else "") + "\n")
+    marks = {"актуальний": "  ", "вміст змінився": "⚠ ", "файлу немає": "✗ ",
+             "поза індексом": "· "}
+    for row in found:
+        name = Path(row["path"]).name or row["asset_id"][:12]
+        mark = marks.get(row["state"], "  ")
+        print(f"{mark}{name}" + ("" if row["state"] == "актуальний"
+                                 else f"   [{row['state']}]"))
+        print(f"    {row['note']}")
+    if stale:
+        print("\n⚠ «вміст змінився» означає, що за цим шляхом тепер ІНШЕ "
+              "зображення.\n  Коментар його не стосується — він прикріплений до "
+              "вмісту, а не до файлу.")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
